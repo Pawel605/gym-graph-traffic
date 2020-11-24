@@ -1,8 +1,9 @@
 from abc import ABC
 from typing import List
+import numpy as np
+import random
 
 import pygame
-import numpy as np
 
 class Intersection(ABC):
 
@@ -17,7 +18,7 @@ class Intersection(ABC):
 
         """create matrix of cells at the intersection; 
         each intersection has 2 cells in two directions ( vertical and horizontal)"""
-        self.cells_at_the_intersection = np.zeros((2, 2), dtype=int)  # create matrix of cells
+        self.cells_at_the_intersection = np.zeros((2,2),dtype = int) #create matrix of cells
 
     def __str__(self) -> str:
         return str(self.idx)
@@ -88,32 +89,27 @@ class FourWayNoTurnsIntersection(Intersection):
             for i, check_cell in enumerate(self.cells_at_the_intersection):
                 for car_in_cell in np.nonzero(check_cell)[0]:
                     if car_in_cell is not None:
-                        # change color for 162, 162, 162
+                        #change color for 162, 162, 162
                         car_color = (0, 0, 254) if light_mode else (180, 180, 180)
                         pygame.draw.rect(surface, car_color,
-                                         pygame.Rect((self.x + self.intersection_size / 2 + 4 * car_in_cell - 2,
-                                                      self.y + (self.intersection_size / 2 * i + 0.5), 1,
-                                                      self.intersection_size / 2 - 0.5)))
+                                        pygame.Rect((self.x + self.intersection_size/2 + 4 * car_in_cell - 2, self.y + (self.intersection_size/2 * i + 0.5), 1, self.intersection_size/2 - 0.5)))
 
             pygame.draw.rect(surface, red,
-                             pygame.Rect(self.x, self.y, self.intersection_size / 2, red_width))
+                             pygame.Rect(self.x, self.y, self.intersection_size/2, red_width))
             pygame.draw.rect(surface, red,
-                             pygame.Rect(self.x + self.intersection_size / 2 + 1, self.y + self.intersection_size - 1,
-                                         self.intersection_size / 2,
+                             pygame.Rect(self.x + self.intersection_size/2 + 1, self.y + self.intersection_size - 1, self.intersection_size/2,
                                          red_width))
 
         else:
 
-            # sprawdzenie czy komórki ze skrzyzowaniu maja auta, czyli są rowne "1", jesli tak to narysuj auto na skrzyzowaniu
+            #sprawdzenie czy komórki ze skrzyzowaniu maja auta, czyli są rowne "1", jesli tak to narysuj auto na skrzyzowaniu
             for i, check_cell in enumerate(self.cells_at_the_intersection):
                 for car_in_cell in np.nonzero(check_cell)[0]:
                     if car_in_cell is not None:
                         # change color for 162, 162, 162
                         car_color = (0, 0, 254) if light_mode else (180, 180, 180)
                         pygame.draw.rect(surface, car_color,
-                                         pygame.Rect((self.x + (self.intersection_size / 2 * car_in_cell + 0.5),
-                                                      self.y + self.intersection_size / 2 + 4 * i - 2,
-                                                      self.intersection_size / 2 - 0.5, 1)))
+                                    pygame.Rect((self.x + (self.intersection_size/2 * car_in_cell + 0.5), self.y + self.intersection_size/2 + 4 * i - 2, self.intersection_size/2 - 0.5, 1)))
 
             pygame.draw.rect(surface, red,
                              pygame.Rect(self.x, self.y + self.intersection_size / 2 + 1, red_width,
@@ -121,6 +117,7 @@ class FourWayNoTurnsIntersection(Intersection):
             pygame.draw.rect(surface, red,
                              pygame.Rect(self.x + self.intersection_size - 1, self.y, red_width,
                                          self.intersection_size / 2))
+
 
     def segment_draw_coords(self, d, to_side):
         half_intersection_size = self.intersection_size / 2
@@ -135,16 +132,120 @@ class FourWayNoTurnsIntersection(Intersection):
         return to_direction[to_side]
 
     def update(self) -> None:
+        #self.cells_at_the_intersection.put(3,1)
         if self.state is "ud":
             self.updates_until_state_change -= 1
             if self.updates_until_state_change == 0:
                 self.state = "lr"
 
-    def can_i_go(self, from_idx) -> int:
-        (source, dest) = self.dest_dict.get(from_idx, (None, None))
+    def can_i_go(self, segment, cars_indices):
+        (source, dest) = self.dest_dict.get(segment.idx, (None, None))
+
         if source in self.state and dest is not None:
-            return dest.free_init_cells
+            if source is "r":
+                if not np.any(self.cells_at_the_intersection[0]):
+
+                    info_free_cells = {
+                        'free_cells_at_intersection': len(self.cells_at_the_intersection[0]),
+                        'chosen_segment': [],
+                        'free_cells_at_segment': {}
+                    }
+                    segments_dict = {}
+
+                    for i, j in enumerate(cars_indices):
+                        #choose direction for each car in last cells of segment
+                        #TODO change
+                        #chosen_direction = random.choices(('l', 'd', 'u'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        chosen_direction = random.choices(('l', 'l', 'l'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        #save chosen segment
+                        info_free_cells['chosen_segment'].append(self.exits[chosen_direction])
+                        #check free cells in chosen segment
+                        segments_dict[j] = self.exits[chosen_direction].free_init_cells
+                        info_free_cells['free_cells_at_segment'] = segments_dict
+
+                    return info_free_cells
+            elif source is "l":
+                if not np.any(self.cells_at_the_intersection[1]):
+
+                    info_free_cells = {
+                        'free_cells_at_intersection': len(self.cells_at_the_intersection[0]),
+                        'chosen_segment': [],
+                        'free_cells_at_segment': {}
+                    }
+                    segments_dict = {}
+
+                    for i, j in enumerate(cars_indices):
+                        # choose direction for each car in last cells of segment
+                        #TODO change
+                        #chosen_direction = random.choices(('r', 'd', 'u'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        chosen_direction = random.choices(('r', 'r', 'r'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        # save chosen segment
+                        info_free_cells['chosen_segment'].append(self.exits[chosen_direction])
+                        # check free cells in chosen segment
+                        segments_dict[j] = self.exits[chosen_direction].free_init_cells
+                        info_free_cells['free_cells_at_segment'] = segments_dict
+
+                    """segments_dict = {}
+                    for i, j in enumerate(cars_indices):
+                        # segments_dict[j] = dest.free_init_cells
+                        chosen_direction = random.choices(('r', 'd', 'u'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        segments_dict[j] = self.exits.get(chosen_direction).free_init_cells
+
+                    free_cells = {
+                        'free_init_cells_intersection': len(self.cells_at_the_intersection[0]),
+                        'free_init_cells': segments_dict,
+                        'chosen_segment': dest
+                    }
+                    print(segments_dict)"""
+
+                    return info_free_cells
+            elif source is "d":
+                if self.cells_at_the_intersection[0][1] == 0 and self.cells_at_the_intersection[1][1] == 0:
+
+                    info_free_cells = {
+                        'free_cells_at_intersection': len(self.cells_at_the_intersection[0]),
+                        'chosen_segment': [],
+                        'free_cells_at_segment': {}
+                    }
+                    segments_dict = {}
+
+                    for i, j in enumerate(cars_indices):
+                        # choose direction for each car in last cells of segment
+                        #TODO change
+                        #chosen_direction = random.choices(('u', 'l', 'r'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        chosen_direction = random.choices(('u', 'u', 'u'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        # save chosen segment
+                        info_free_cells['chosen_segment'].append(self.exits[chosen_direction])
+                        # check free cells in chosen segment
+                        segments_dict[j] = self.exits[chosen_direction].free_init_cells
+                        info_free_cells['free_cells_at_segment'] = segments_dict
+
+                    return info_free_cells
+            else:
+                if self.cells_at_the_intersection[0][0] == 0 and self.cells_at_the_intersection[0][0] == 0:
+
+                    info_free_cells = {
+                        'free_cells_at_intersection': len(self.cells_at_the_intersection[0]),
+                        'chosen_segment': [],
+                        'free_cells_at_segment': {}
+                    }
+                    segments_dict = {}
+
+                    for i, j in enumerate(cars_indices):
+                        # choose direction for each car in last cells of segment
+                        #TODO change
+                        #chosen_direction = random.choices(('d', 'l', 'r'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        chosen_direction = random.choices(('d', 'd', 'd'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        # save chosen segment
+                        info_free_cells['chosen_segment'].append(self.exits[chosen_direction])
+                        # check free cells in chosen segment
+                        segments_dict[j] = self.exits[chosen_direction].free_init_cells
+                        info_free_cells['free_cells_at_segment'] = segments_dict
+
+                    return info_free_cells
+
         return 0
+
 
     def pass_car(self, from_idx, car_position, car_velocity) -> None:
         (_, dest) = self.dest_dict[from_idx]
