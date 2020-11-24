@@ -2,6 +2,7 @@ from abc import ABC
 from typing import List
 
 import pygame
+import numpy as np
 
 class Intersection(ABC):
 
@@ -13,6 +14,10 @@ class Intersection(ABC):
 
         self.routing = None  # entrance_direction: str -> exit_direction: str
         self.dest_dict = None  # entrance_segment_idx: int -> (entrance_direction: str, exit_segment: Segment)
+
+        """create matrix of cells at the intersection; 
+        each intersection has 2 cells in two directions ( vertical and horizontal)"""
+        self.cells_at_the_intersection = np.zeros((2, 2), dtype=int)  # create matrix of cells
 
     def __str__(self) -> str:
         return str(self.idx)
@@ -78,17 +83,44 @@ class FourWayNoTurnsIntersection(Intersection):
         pygame.draw.rect(surface, road_color,
                          pygame.Rect(self.x, self.y, self.intersection_size, self.intersection_size))
         if self.state is "lr":
+
+            # sprawdzenie czy komórki ze skrzyzowaniu maja auta, czyli są rowne "1", jesli tak to narysuj auto na skrzyzowaniu
+            for i, check_cell in enumerate(self.cells_at_the_intersection):
+                for car_in_cell in np.nonzero(check_cell)[0]:
+                    if car_in_cell is not None:
+                        # change color for 162, 162, 162
+                        car_color = (0, 0, 254) if light_mode else (180, 180, 180)
+                        pygame.draw.rect(surface, car_color,
+                                         pygame.Rect((self.x + self.intersection_size / 2 + 4 * car_in_cell - 2,
+                                                      self.y + (self.intersection_size / 2 * i + 0.5), 1,
+                                                      self.intersection_size / 2 - 0.5)))
+
             pygame.draw.rect(surface, red,
-                             pygame.Rect(self.x, self.y, self.intersection_size, red_width))
+                             pygame.Rect(self.x, self.y, self.intersection_size / 2, red_width))
             pygame.draw.rect(surface, red,
-                             pygame.Rect(self.x, self.y + self.intersection_size - 1, self.intersection_size,
+                             pygame.Rect(self.x + self.intersection_size / 2 + 1, self.y + self.intersection_size - 1,
+                                         self.intersection_size / 2,
                                          red_width))
+
         else:
+
+            # sprawdzenie czy komórki ze skrzyzowaniu maja auta, czyli są rowne "1", jesli tak to narysuj auto na skrzyzowaniu
+            for i, check_cell in enumerate(self.cells_at_the_intersection):
+                for car_in_cell in np.nonzero(check_cell)[0]:
+                    if car_in_cell is not None:
+                        # change color for 162, 162, 162
+                        car_color = (0, 0, 254) if light_mode else (180, 180, 180)
+                        pygame.draw.rect(surface, car_color,
+                                         pygame.Rect((self.x + (self.intersection_size / 2 * car_in_cell + 0.5),
+                                                      self.y + self.intersection_size / 2 + 4 * i - 2,
+                                                      self.intersection_size / 2 - 0.5, 1)))
+
             pygame.draw.rect(surface, red,
-                             pygame.Rect(self.x, self.y, red_width, self.intersection_size))
+                             pygame.Rect(self.x, self.y + self.intersection_size / 2 + 1, red_width,
+                                         self.intersection_size / 2))
             pygame.draw.rect(surface, red,
                              pygame.Rect(self.x + self.intersection_size - 1, self.y, red_width,
-                                         self.intersection_size))
+                                         self.intersection_size / 2))
 
     def segment_draw_coords(self, d, to_side):
         half_intersection_size = self.intersection_size / 2
