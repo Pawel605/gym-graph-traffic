@@ -455,6 +455,39 @@ class FourWayNoTurnsIntersection(Intersection):
 
                 # if the first cell is occupied and car turn right
                 elif car[0] == 0 and car[4] == "turn right":
+                    # e.g. [  1] ^-
+                    #      [   ]
+                    # e.g. [   ]
+                    #      [1  ] --v
+                    pos = np.zeros((1 + car[3].free_init_cells), dtype=np.int8)
+                    # put car in the vector
+                    pos[0] = 1
+                    (pos, vel) = self._nagel_schreckenberg_step(pos, car[1])
+                    # split cells - 1 cell at intersection
+                    pos, next_segment_cells = np.split(pos, [1])
+
+                    # if the car stays at the intersection
+                    if (np.count_nonzero(next_segment_cells)) == 0:
+                        # update velocity car at the intersection
+                        car[1] = vel
+                    else:
+                        # if the car leaves the intersection
+                        # add car to new segment
+                        car[3].new_car_at = (next_segment_cells.tolist().index(1), vel[0])
+
+                        # clean the cell at the intersection
+                        if car[2] == 'l':
+                            self.cells_at_the_intersection.put(3, 0)
+                        elif car[2] == 'r':
+                            self.cells_at_the_intersection.put(0, 0)
+                        elif car[2] == 'd':
+                            self.cells_at_the_intersection.put(1, 0)
+                        else:
+                            self.cells_at_the_intersection.put(2, 0)
+
+                        delete_elements.append(car)
+
+                elif car[0] == 0 and car[4] == "turn right":
                     # TODO TURN RIGHT
                     print("turn right")
 
