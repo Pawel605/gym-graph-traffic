@@ -1,8 +1,7 @@
 from abc import ABC
-from typing import List
+from typing import List, Union, Tuple
 import numpy as np
 import random
-
 
 import pygame
 
@@ -16,7 +15,7 @@ class Intersection(ABC):
         self.exits = {}
 
         self.routing = None  # entrance_direction: str -> exit_direction: str
-        self.dest_dict = None  # entrance_segment_idx: int -> (entrance_direction: str, exit_segment: Segment)
+        self.dest_dict = None  # entrance_segment_idx: int -> {entrance_direction: str, exit_segment: Segment}
 
         """create matrix of cells at the intersection; 
         each intersection has 2 cells in two directions ( vertical and horizontal)"""
@@ -54,10 +53,11 @@ class FourWayNoTurnsIntersection(Intersection):
         super().__init__(idx)
 
         self.red_durations = red_durations
-        self.routing = {"u": "d",
-                        "d": "u",
-                        "l": "r",
-                        "r": "l"}
+        self.routing = {"u": ["d", "l", "r"],
+                        "d": ["u", "l", "r"],
+                        "l": ["r", "u", "d"],
+                        "r": ["l", "u", "d"]
+                        }
 
         self.updates_until_state_change = -1
         self.state = None
@@ -71,9 +71,10 @@ class FourWayNoTurnsIntersection(Intersection):
 
     def finalize(self) -> None:
         self.dest_dict = {}
-
         for dir_char, segment in self.entrances.items():
-            destination_segment = self.exits[self.routing[dir_char]]
+            destination_segment = []
+            for routing_exit_char in self.routing[dir_char]:
+                destination_segment.append(self.exits[routing_exit_char])
             self.dest_dict[segment.idx] = (dir_char, destination_segment)
 
     def set_action(self, action) -> None:
@@ -91,11 +92,11 @@ class FourWayNoTurnsIntersection(Intersection):
                          pygame.Rect(self.x, self.y, self.intersection_size, self.intersection_size))
         if self.state is "lr":
 
-            # checking if the cells with the intersection have cars, i.e. they are equal to "1", if so, draw a car at
-            # the intersection
+            # Check if the cells with the intersection have cars (they are equal to "1"), if so, draw a car at the intersection
             for i, check_cell in enumerate(self.cells_at_the_intersection):
                 for car_in_cell in np.nonzero(check_cell)[0]:
                     if car_in_cell is not None:
+                        # TODO
                         # change color for 162, 162, 162
                         car_color = (0, 0, 254) if light_mode else (180, 180, 180)
                         pygame.draw.rect(surface, car_color,
@@ -112,8 +113,7 @@ class FourWayNoTurnsIntersection(Intersection):
 
         else:
 
-            # checking if the cells with the intersection have cars, i.e. they are equal to "1", if so, draw a car at
-            # the intersection
+            # Check if the cells with the intersection have cars (they are equal to "1"), if so, draw a car at the intersection
             for i, check_cell in enumerate(self.cells_at_the_intersection):
                 for car_in_cell in np.nonzero(check_cell)[0]:
                     if car_in_cell is not None:
@@ -150,199 +150,465 @@ class FourWayNoTurnsIntersection(Intersection):
             if self.updates_until_state_change == 0:
                 self.state = "lr"
 
-    def can_i_go(self, segment, cars_indices):
-        (source, dest) = self.dest_dict.get(segment.idx, (None, None))
+    def can_i_go(self, from_idx, cars_indices):
+        # (source, dest) = self.dest_dict.get(segment.idx, (None, None))
+        # source = self.dest_dict.get(segment.idx)[0]
+        source = self.dest_dict[from_idx][0]
 
-        if source in self.state and dest is not None:
+        if source in self.state:
+
+            """
+            Check first if the intersection was left by cars from the previous
+            state which were driving straight or turning left, e.g.
+            If previous state was "ud" and now state is "lr" and 
+            if there is a car in the cell:
+            ↓[1 0]
+            ↓[0 0]
+            and this car is going to straight, it has priority at the
+            intersection and must first leave the intersection in order
+            for a car to enter from the left. The same will happen if 
+            the car in this cell wants to turn left, e.g.
+            ↓[1 0]      
+            ↓[0 0]
+              ---->   
+            Otherwise, when a car from the cell wants to turn left and
+            comes from the same state that is on, e.g.
+            state is "ld", car comes to intersection from right
+            <-----
+            ↓[1 0]
+            ↓[0 0]
+            it must stop and give way to cars on the left side of the intersection.
+            """
+
+            # This variable stores information from which side of the intersection
+            # the car entered and which direction in the example above
+            side_previous_segment = ""
+            direction_previous_segment = ""
 
             if source is "r":
-                # car can go if two cells in its direction is free and the cell on the left is also free
+                # car can go if two cells in its direction is free
                 # [0 0]     [0 0]
                 # [0 0]  or [1 0]
-                #  otherwise it can be accident when
-                # [0 0]
-                # [0 1]
-                if np.count_nonzero(self.cells_at_the_intersection[0]) == 0 and self.cells_at_the_intersection[1][1] == 0:
-                    info_free_cells = {
-                        'free_cells_at_intersection': None,
-                        'chosen_segment': [],
-                        'free_cells_at_segment': {},
-                        'direction': ""
-                    }
 
-                    # choose direction for  car in last cell of segment
-                    # TODO change
-                    # chosen_direction = random.choices(('l', 'u', 'd'), weights=(0.5, 0.25, 0.25), k=1)[0]
-                    chosen_direction = random.choices(('l', 'l', 'l'), weights=(0.5, 0.25, 0.25), k=1)[0]
-                    # determine the number of cells at the intersection
-                    if chosen_direction == 'l':
-                        # straight
-                        info_free_cells['free_cells_at_intersection'] = 2
-                        info_free_cells['direction'] = "straight"
-                    elif chosen_direction == 'u':
-                        # turn right
-                        info_free_cells['free_cells_at_intersection'] = 1
-                        info_free_cells['direction'] = "turn right"
-                    else:
-                        # turn left
-                        # TODO
-                        info_free_cells['free_cells_at_intersection'] = 3
-                        info_free_cells['direction'] = "turn left"
+                if np.count_nonzero(self.cells_at_the_intersection[0]) == 0:
 
-                        # save chosen segment
-                    info_free_cells['chosen_segment'].append(self.exits[chosen_direction])
-                    # check free cells in chosen segment
-                    info_free_cells['free_cells_at_segment'] = {
-                        cars_indices[-1]: self.exits[chosen_direction].free_init_cells}
+                    # if the car is in a cell on the left,
+                    # [0 0]
+                    # [0 1]
+                    # check if this car is a previous state or not
+                    if self.cells_at_the_intersection[1][1] == 1:
 
-                    return info_free_cells
+                        for car in self.new_car_at_intersection:
+                            side_previous_segment = self.dest_dict[car[2]][0]
+                            direction_previous_segment = car[5]
+
+                        check = None
+
+                        if side_previous_segment == "d" and direction_previous_segment == "turn left":
+                            check = False
+                        elif side_previous_segment == "d" and direction_previous_segment == "straight":
+                            check = False
+                        else:
+                            check = True
+
+                    if self.cells_at_the_intersection[1][1] == 0 or (
+                            self.cells_at_the_intersection[1][1] == 1 and check == True):
+
+                        info_can_i_go = {
+                            'free_cells_at_intersection': None,
+                            'chosen_segment': [],
+                            'free_cells_at_segment': {},
+                            'direction': ""
+                        }
+
+                        # choose direction for  car in last cell of segment
+                        # TODO change
+                        # chosen_direction = random.choices(('l', 'u', 'd'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        chosen_direction = random.choices(('d', 'd', 'd'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        # determine the number of cells at the intersection
+                        if chosen_direction == 'l':
+                            # straight
+                            info_can_i_go['free_cells_at_intersection'] = 2
+                            info_can_i_go['direction'] = "straight"
+                        elif chosen_direction == 'u':
+                            # turn right
+                            info_can_i_go['free_cells_at_intersection'] = 1
+                            info_can_i_go['direction'] = "turn right"
+                        else:
+                            # turn left
+                            info_can_i_go['direction'] = "turn left"
+                            # check if there is a car in a cell [1][0]
+                            # if not car can go
+                            if self.cells_at_the_intersection[1][0] == 0:
+                                # check if there are cars in the opposite segment
+                                if np.count_nonzero(self.entrances['l'].p) != 0:
+                                    # check if there is a car the last five cells in the opposite segment
+                                    if (np.where(self.entrances['l'].p == 1)[0][-1]) < 95:
+                                        info_can_i_go['free_cells_at_intersection'] = 3
+                                        info_can_i_go['free_cells_at_segment'] = {
+                                            cars_indices: self.exits[chosen_direction].free_init_cells}
+                                    else:
+                                        info_can_i_go['free_cells_at_intersection'] = 2
+                                        # info_can_i_go['free_cells_at_segment'] = 0
+                                        info_can_i_go['free_cells_at_segment'] = {
+                                            cars_indices: 0}
+                                else:
+                                    # nothing is coming from the opposite direction
+                                    info_can_i_go['free_cells_at_intersection'] = 3
+                                    info_can_i_go['free_cells_at_segment'] = {
+                                        cars_indices: self.exits[chosen_direction].free_init_cells}
+                            else:
+                                info_can_i_go['free_cells_at_intersection'] = 2
+                                # there is a car on the left-turn trajectory, so this is equal to zero
+                                # info_can_i_go['free_cells_at_segment'] = 0
+                                info_can_i_go['free_cells_at_segment'] = {
+                                    cars_indices: 0}
+
+                        # save id and side chosen segment
+                        info_can_i_go['chosen_segment'].append(self.exits[chosen_direction].idx)
+                        info_can_i_go['chosen_segment'].append(self.exits[chosen_direction].to_side)
+
+                    if chosen_direction != 'd':
+                        # check free cells in chosen segment
+                        info_can_i_go['free_cells_at_segment'] = {
+                            cars_indices: self.exits[chosen_direction].free_init_cells}
+
+                    return info_can_i_go
+
             elif source is "l":
-                if np.count_nonzero(self.cells_at_the_intersection[1]) == 0 and self.cells_at_the_intersection[0][0] == 0:
-                    info_free_cells = {
-                        'free_cells_at_intersection': None,
-                        'chosen_segment': [],
-                        'free_cells_at_segment': {},
-                        'direction': ""
-                    }
 
-                    # choose direction for  car in last cell of segment
-                    # TODO change
-                    # chosen_direction = random.choices(('r', 'd', 'u'), weights=(0.5, 0.25, 0.25), k=1)[0]
-                    chosen_direction = random.choices(('r', 'r', 'r'), weights=(0.5, 0.25, 0.25), k=1)[0]
-                    # determine the number of cells at the intersection
-                    if chosen_direction == 'r':
-                        # straight
-                        info_free_cells['free_cells_at_intersection'] = 2
-                        info_free_cells['direction'] = "straight"
-                    elif chosen_direction == 'd':
-                        # turn right
-                        info_free_cells['free_cells_at_intersection'] = 1
-                        info_free_cells['direction'] = "turn right"
-                    else:
-                        # turn left
-                        info_free_cells['free_cells_at_intersection'] = 3
-                        info_free_cells['direction'] = "turn left"
+                # car can go if two cells in its direction is free
+                # [0 0]     [0 1]
+                # [0 0]  or [0 0]
 
-                    # save chosen segment
-                    info_free_cells['chosen_segment'].append(self.exits[chosen_direction])
-                    # check free cells in chosen segment
-                    info_free_cells['free_cells_at_segment'] = {
-                        cars_indices[-1]: self.exits[chosen_direction].free_init_cells}
+                if np.count_nonzero(self.cells_at_the_intersection[1]) == 0:
 
-                    return info_free_cells
+                    # if the car is in a cell on the left,
+                    # [1 0]
+                    # [0 0]
+                    # check if this car is a previous state or not
+                    if self.cells_at_the_intersection[0][0] == 1:
+
+                        for car in self.new_car_at_intersection:
+                            side_previous_segment = self.dest_dict[car[2]][0]
+                            direction_previous_segment = car[5]
+
+                        check = None
+
+                        if side_previous_segment == "u" and direction_previous_segment == "turn left":
+                            check = False
+                        elif side_previous_segment == "u" and direction_previous_segment == "straight":
+                            check = False
+                        else:
+                            check = True
+
+                    if self.cells_at_the_intersection[0][0] == 0 or (
+                            self.cells_at_the_intersection[0][0] == 1 and check == True):
+
+                        info_can_i_go = {
+                            'free_cells_at_intersection': None,
+                            'chosen_segment': [],
+                            'free_cells_at_segment': {},
+                            'direction': ""
+                        }
+
+                        # choose direction for  car in last cell of segment
+                        # TODO change
+                        # chosen_direction = random.choices(('r', 'd', 'u'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        chosen_direction = random.choices(('r', 'r', 'r'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        # determine the number of cells at the intersection
+                        if chosen_direction == 'r':
+                            # straight
+                            info_can_i_go['free_cells_at_intersection'] = 2
+                            info_can_i_go['direction'] = "straight"
+                        elif chosen_direction == 'd':
+                            # turn right
+                            info_can_i_go['free_cells_at_intersection'] = 1
+                            info_can_i_go['direction'] = "turn right"
+                        else:
+                            # turn left
+                            info_can_i_go['direction'] = "turn left"
+                            # check if there is a car in a cell [0][1]
+                            if self.cells_at_the_intersection[0][1] == 0:
+                                # check if there are cars in the opposite segment
+                                if np.count_nonzero(self.entrances['r'].p) != 0:
+                                    # check if there is a car the last five cells in the opposite segment
+                                    if (np.where(self.entrances['r'].p == 1)[0][-1]) < 95:
+                                        info_can_i_go['free_cells_at_intersection'] = 3
+                                        info_can_i_go['free_cells_at_segment'] = {
+                                            cars_indices: self.exits[chosen_direction].free_init_cells}
+                                    else:
+                                        info_can_i_go['free_cells_at_intersection'] = 2
+                                        info_can_i_go['free_cells_at_segment'] = {
+                                            cars_indices: 0}
+                                else:
+                                    # nothing is coming from the opposite direction
+                                    info_can_i_go['free_cells_at_intersection'] = 3
+                                    info_can_i_go['free_cells_at_segment'] = {
+                                        cars_indices: self.exits[chosen_direction].free_init_cells}
+                            else:
+                                info_can_i_go['free_cells_at_intersection'] = 2
+                                # there is a car on the left-turn trajectory, so this is equal to zero
+                                info_can_i_go['free_cells_at_segment'] = {
+                                    cars_indices: 0}
+
+                        # save id and side chosen segment
+                        info_can_i_go['chosen_segment'].append(self.exits[chosen_direction].idx)
+                        info_can_i_go['chosen_segment'].append(self.exits[chosen_direction].to_side)
+
+                        if chosen_direction != 'u':
+                            # check free cells in chosen segment
+                            info_can_i_go['free_cells_at_segment'] = {
+                                cars_indices: self.exits[chosen_direction].free_init_cells}
+
+                        return info_can_i_go
+
             elif source is "d":
-                if self.cells_at_the_intersection[0][1] == 0 and self.cells_at_the_intersection[1][1] == 0 and self.cells_at_the_intersection[1][0] == 0:
-                    info_free_cells = {
-                        'free_cells_at_intersection': None,
-                        'chosen_segment': [],
-                        'free_cells_at_segment': {},
-                        'direction': ""
-                    }
-                    # choose direction for  car in last cell of segment
-                    # TODO change
-                    # chosen_direction = random.choices(('u', 'r', 'l'), weights=(0.5, 0.25, 0.25), k=1)[0]
-                    chosen_direction = random.choices(('u', 'u', 'u'), weights=(0.5, 0.25, 0.25), k=1)[0]
-                    # determine the number of cells at the intersection
-                    if chosen_direction == 'u':
-                        # straight
-                        info_free_cells['free_cells_at_intersection'] = 2
-                        info_free_cells['direction'] = "straight"
-                    elif chosen_direction == 'r':
-                        # turn right
-                        info_free_cells['free_cells_at_intersection'] = 1
-                        info_free_cells['direction'] = "turn right"
-                    else:
-                        # turn left
-                        info_free_cells['free_cells_at_intersection'] = 3
-                        info_free_cells['direction'] = "turn left"
-                    # save chosen segment
-                    info_free_cells['chosen_segment'].append(self.exits[chosen_direction])
-                    # check free cells in chosen segment
-                    info_free_cells['free_cells_at_segment'] = {
-                        cars_indices[-1]: self.exits[chosen_direction].free_init_cells}
 
-                    return info_free_cells
+                # car can go if two cells in its direction is free
+                # [0 0]     [0 0]
+                # [0 0]  or [1 0]
+                if self.cells_at_the_intersection[0][1] == 0 and self.cells_at_the_intersection[1][1] == 0:
+
+                    # if the car is in a cell on the left,
+                    # [0 0]
+                    # [1 0]
+                    # check if this car is a previous state or not
+                    if self.cells_at_the_intersection[1][0] == 1:
+
+                        for car in self.new_car_at_intersection:
+                            side_previous_segment = self.dest_dict[car[2]][0]
+                            direction_previous_segment = car[5]
+
+                        check = None
+
+                        if side_previous_segment == "l" and direction_previous_segment == "turn left":
+                            check = False
+                        elif side_previous_segment == "l" and direction_previous_segment == "straight":
+                            check = False
+                        else:
+                            check = True
+
+                    if self.cells_at_the_intersection[1][0] == 0 or (
+                            self.cells_at_the_intersection[1][0] == 1 and check == True):
+
+                        info_can_i_go = {
+                            'free_cells_at_intersection': None,
+                            'chosen_segment': [],
+                            'free_cells_at_segment': {},
+                            'direction': ""
+                        }
+                        # choose direction for  car in last cell of segment
+                        # TODO change
+                        # chosen_direction = random.choices(('u', 'r', 'l'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        chosen_direction = random.choices(('u', 'u', 'u'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        # determine the number of cells at the intersection
+                        if chosen_direction == 'u':
+                            # straight
+                            info_can_i_go['free_cells_at_intersection'] = 2
+                            info_can_i_go['direction'] = "straight"
+                        elif chosen_direction == 'r':
+                            # turn right
+                            info_can_i_go['free_cells_at_intersection'] = 1
+                            info_can_i_go['direction'] = "turn right"
+                        else:
+                            # turn left
+                            info_can_i_go['direction'] = "turn left"
+                            # check if there is a car in a cell [0][0]
+                            if self.cells_at_the_intersection[0][0] == 0:
+                                # check if there are cars in the opposite segment
+                                if np.count_nonzero(self.entrances['u'].p) != 0:
+                                    # check if there is a car the last five cells in the opposite segment
+                                    if (np.where(self.entrances['u'].p == 1)[0][-1]) < 95:
+                                        info_can_i_go['free_cells_at_intersection'] = 3
+                                        info_can_i_go['free_cells_at_segment'] = {
+                                            cars_indices: self.exits[chosen_direction].free_init_cells}
+                                    else:
+                                        info_can_i_go['free_cells_at_intersection'] = 2
+                                        info_can_i_go['free_cells_at_segment'] = {
+                                            cars_indices: 0}
+                                else:
+                                    # nothing is coming from the opposite direction
+                                    info_can_i_go['free_cells_at_intersection'] = 3
+                                    info_can_i_go['free_cells_at_segment'] = {
+                                        cars_indices: self.exits[chosen_direction].free_init_cells}
+                            else:
+                                info_can_i_go['free_cells_at_intersection'] = 2
+                                # there is a car on the left-turn trajectory, so this is equal to zero
+                                info_can_i_go['free_cells_at_segment'] = {
+                                    cars_indices: 0}
+
+                        # save id and side chosen segment
+                        info_can_i_go['chosen_segment'].append(self.exits[chosen_direction].idx)
+                        info_can_i_go['chosen_segment'].append(self.exits[chosen_direction].to_side)
+
+                        if chosen_direction != 'l':
+                            # check free cells in chosen segment
+                            info_can_i_go['free_cells_at_segment'] = {
+                                cars_indices: self.exits[chosen_direction].free_init_cells}
+
+                        return info_can_i_go
             else:
-                if self.cells_at_the_intersection[0][0] == 0 and self.cells_at_the_intersection[1][0] == 0 and self.cells_at_the_intersection[1][1] == 0:
-                    info_free_cells = {
-                        'free_cells_at_intersection': None,
-                        'chosen_segment': [],
-                        'free_cells_at_segment': {},
-                        'direction': ""
-                    }
 
-                    # TODO change
-                    # chosen_direction = random.choices(('d', 'l', 'r'), weights=(0.5, 0.25, 0.25), k=1)[0]
-                    chosen_direction = random.choices(('d', 'd', 'd'), weights=(0.5, 0.25, 0.25), k=1)[0]
-                    # determine the number of cells at the intersection
-                    if chosen_direction == 'd':
-                        # straight
-                        info_free_cells['free_cells_at_intersection'] = 2
-                        info_free_cells['direction'] = "straight"
-                    elif chosen_direction == 'l':
-                        # turn right
-                        info_free_cells['free_cells_at_intersection'] = 1
-                        info_free_cells['direction'] = "turn right"
-                    else:
-                        # turn left
-                        info_free_cells['free_cells_at_intersection'] = 3
-                        info_free_cells['direction'] = "turn left"
-                    # save chosen segment
-                    info_free_cells['chosen_segment'].append(self.exits[chosen_direction])
-                    # check free cells in chosen segment
-                    info_free_cells['free_cells_at_segment'] = {
-                        cars_indices[-1]: self.exits[chosen_direction].free_init_cells}
+                # car can go if two cells in its direction is free
+                # [0 0]     [0 0]
+                # [0 0]  or [0 1]
+                if self.cells_at_the_intersection[0][0] == 0 and self.cells_at_the_intersection[1][0] == 0:
 
-                    return info_free_cells
+                    # if the car is in a cell on the left,
+                    # [0 1]
+                    # [0 0]
+                    # check if this car is a previous state or not
+                    if self.cells_at_the_intersection[0][1] == 1:
 
+                        for car in self.new_car_at_intersection:
+                            side_previous_segment = self.dest_dict[car[2]][0]
+                            direction_previous_segment = car[5]
+
+                        check = None
+
+                        if side_previous_segment == "r" and direction_previous_segment == "turn left":
+                            check = False
+                        elif side_previous_segment == "r" and direction_previous_segment == "straight":
+                            check = False
+                        else:
+                            check = True
+
+                    if self.cells_at_the_intersection[0][1] == 0 or (
+                            self.cells_at_the_intersection[0][1] == 1 and check == True):
+
+                        info_can_i_go = {
+                            'free_cells_at_intersection': None,
+                            'chosen_segment': [],
+                            'free_cells_at_segment': {},
+                            'direction': ""
+                        }
+
+                        # TODO change
+                        # chosen_direction = random.choices(('d', 'l', 'r'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        chosen_direction = random.choices(('d', 'd', 'd'), weights=(0.5, 0.25, 0.25), k=1)[0]
+                        # determine the number of cells at the intersection
+                        if chosen_direction == 'd':
+                            # straight
+                            info_can_i_go['free_cells_at_intersection'] = 2
+                            info_can_i_go['direction'] = "straight"
+                        elif chosen_direction == 'l':
+                            # turn right
+                            info_can_i_go['free_cells_at_intersection'] = 1
+                            info_can_i_go['direction'] = "turn right"
+                        else:
+                            # turn left
+                            info_can_i_go['direction'] = "turn left"
+                            # check if there is a car in a cell [1][1]
+                            if self.cells_at_the_intersection[1][1] == 0:
+                                # check if there are cars in the opposite segment
+                                if np.count_nonzero(self.entrances['d'].p) != 0:
+                                    # check if there is a car the last five cells in the opposite segment
+                                    if (np.where(self.entrances['d'].p == 1)[0][-1]) < 95:
+                                        info_can_i_go['free_cells_at_intersection'] = 3
+                                        info_can_i_go['free_cells_at_segment'] = {
+                                            cars_indices: self.exits[chosen_direction].free_init_cells}
+                                    else:
+                                        info_can_i_go['free_cells_at_intersection'] = 2
+                                        info_can_i_go['free_cells_at_segment'] = {
+                                            cars_indices: 0}
+                                else:
+                                    # nothing is coming from the opposite direction
+                                    info_can_i_go['free_cells_at_intersection'] = 3
+                                    info_can_i_go['free_cells_at_segment'] = {
+                                        cars_indices: self.exits[chosen_direction].free_init_cells}
+                            else:
+                                info_can_i_go['free_cells_at_intersection'] = 2
+                                # there is a car on the left-turn trajectory, so this is equal to zero
+                                info_can_i_go['free_cells_at_segment'] = {
+                                    cars_indices: 0}
+
+                        # save id and side chosen segment
+                        info_can_i_go['chosen_segment'].append(self.exits[chosen_direction].idx)
+                        info_can_i_go['chosen_segment'].append(self.exits[chosen_direction].to_side)
+
+                        if chosen_direction != 'r':
+                            # check free cells in chosen segment
+                            info_can_i_go['free_cells_at_segment'] = {
+                                cars_indices: self.exits[chosen_direction].free_init_cells}
+
+                        return info_can_i_go
         return 0
 
-    def pass_car(self, from_idx, car_position, car_velocity, next_segment, direction) -> None:
+    def pass_car(self, from_idx, car_position, car_velocity, id_next_segment, side_next_segment, direction) -> None:
 
-        # TODO change conditions
         # if l->r or r<-l or d ↑ u or u ↓ d
         if direction == "straight":
             if car_position == 0 or car_position == 1:
                 self.modify_the_cells_at_the_intersection(self.dest_dict[from_idx][0], car_position)
-                self.new_car_at_intersection.append([car_position, car_velocity, next_segment.to_side, next_segment, direction])
+                self.new_car_at_intersection.append(
+                    [car_position, car_velocity, from_idx, side_next_segment, id_next_segment, direction])
                 # update information about init cells
                 self._update_free_init_cells()
             else:
-                next_segment.new_car_at = (car_position - 2, car_velocity)
+
+                for i in self.dest_dict[from_idx][1]:
+                    if i.idx == id_next_segment:
+                        i.new_car_at = (car_position - 2, car_velocity)
         elif direction == "turn right":
             if car_position == 0:
                 self.modify_the_cells_at_the_intersection(self.dest_dict[from_idx][0], car_position)
-                self.new_car_at_intersection.append([car_position, car_velocity, next_segment.to_side, next_segment, direction])
+                self.new_car_at_intersection.append(
+                    [car_position, car_velocity, from_idx, side_next_segment, id_next_segment, direction])
                 # update information about init cells
                 self._update_free_init_cells()
             else:
-                next_segment.new_car_at = (car_position - 1, car_velocity)
-        else:
-            print("change")
-            # TODO
+                for i in self.dest_dict[from_idx][1]:
+                    if i.idx == id_next_segment:
+                        i.new_car_at = (car_position - 1, car_velocity)
+        else:  # turn left
+            if car_position == 0 or car_position == 1:
+                self.modify_the_cells_at_the_intersection(self.dest_dict[from_idx][0], car_position)
+                self.new_car_at_intersection.append(
+                    [car_position, car_velocity, from_idx, side_next_segment, id_next_segment, direction])
+                # update information about init cells
+                self._update_free_init_cells()
+            elif car_position == 2:
+                self.modify_the_cells_at_the_intersection(self.dest_dict[from_idx][0], car_position)
+                self.new_car_at_intersection.append(
+                    [car_position, car_velocity, from_idx, side_next_segment, id_next_segment, direction])
+                # update information about init cells
+                self._update_free_init_cells()
+            else:
+                for i in self.dest_dict[from_idx][1]:
+                    if i.idx == id_next_segment:
+                        i.new_car_at = (car_position - 3, car_velocity)
 
     def modify_the_cells_at_the_intersection(self, to_side, cell_with_a_car):
         # put the car in the cell at the intersection
         if to_side == 'u':
             if cell_with_a_car == 0:
                 self.cells_at_the_intersection.put(0, 1)
-            else:
+            elif cell_with_a_car == 1:
                 self.cells_at_the_intersection.put(2, 1)
+            else:
+                self.cells_at_the_intersection.put(3, 1)
         elif to_side == 'd':
             if cell_with_a_car == 0:
                 self.cells_at_the_intersection.put(3, 1)
-            else:
-                self.cells_at_the_intersection.put(1, 1)
-        elif to_side == 'l':
-            if cell_with_a_car == 0:
-                self.cells_at_the_intersection.put(2, 1)
-            else:
-                self.cells_at_the_intersection.put(3, 1)
-        else:
-            if cell_with_a_car == 0:
+            elif cell_with_a_car == 1:
                 self.cells_at_the_intersection.put(1, 1)
             else:
                 self.cells_at_the_intersection.put(0, 1)
+        elif to_side == 'l':
+            if cell_with_a_car == 0:
+                self.cells_at_the_intersection.put(2, 1)
+            elif cell_with_a_car == 1:
+                self.cells_at_the_intersection.put(3, 1)
+            else:
+                self.cells_at_the_intersection.put(1, 1)
+        else:
+            if cell_with_a_car == 0:
+                self.cells_at_the_intersection.put(1, 1)
+            elif cell_with_a_car == 1:
+                self.cells_at_the_intersection.put(0, 1)
+            else:
+                self.cells_at_the_intersection.put(2, 1)
 
     def update_first_phase(self) -> None:
         """
@@ -351,6 +617,9 @@ class FourWayNoTurnsIntersection(Intersection):
 
         if np.count_nonzero(self.cells_at_the_intersection) != 0:
 
+            if np.count_nonzero(self.cells_at_the_intersection) != len(self.new_car_at_intersection):
+                print("roznica!!!!!!!")
+
             # auxiliary array for removing elements from new_car_at_intersection
             delete_elements = []
 
@@ -358,17 +627,30 @@ class FourWayNoTurnsIntersection(Intersection):
             # intersection (0 or 1), the speed of the car, the direction
             # it came from, the next segment where it wants to go and
             # whether the car turns left or not.
-            # car = [car_position, car_velocity, from_side, next_segment, direction]
+            # car = [car_position, car_velocity, from_idx, side_next_segment, id_next_segment, direction]
             # direction: straight, turn right or turn left
             for car in self.new_car_at_intersection:
 
+                # auxiliary variable storing information from which side
+                # of the intersection the next segment is located
+                side_exit_from_intersection = ""
+                if car[3] == "l":
+                    side_exit_from_intersection = "r"
+                elif car[3] == "d":
+                    side_exit_from_intersection = "u"
+                elif car[3] == "u":
+                    side_exit_from_intersection = "d"
+                else:
+                    side_exit_from_intersection = "l"
+
                 # if the first cell is occupied and car go straight
-                if car[0] == 0 and car[4] == "straight":
+                if car[0] == 0 and car[5] == "straight":
                     # e.g. [   ]
                     #  --> [1 0] -->
                     # e.g. [1  ]  ↓
                     #      [0  ]  ↓
-                    pos = np.zeros((2 + car[3].free_init_cells), dtype=np.int8)
+                    # todo change
+                    pos = np.zeros((2 + self.exits[side_exit_from_intersection].free_init_cells), dtype=np.int8)
                     # put car in the vector
                     pos[0] = 1
                     (pos, vel) = self._nagel_schreckenberg_step(pos, car[1])
@@ -384,13 +666,13 @@ class FourWayNoTurnsIntersection(Intersection):
                         if pos.tolist().index(1) == 1:
                             # update position car at the intersection
                             car[0] = 1
-                            if car[2] == 'l':
+                            if car[3] == 'l':
                                 self.cells_at_the_intersection.put(2, 0)
                                 self.cells_at_the_intersection.put(3, 1)
-                            elif car[2] == 'r':
+                            elif car[3] == 'r':
                                 self.cells_at_the_intersection.put(1, 0)
                                 self.cells_at_the_intersection.put(0, 1)
-                            elif car[2] == 'd':
+                            elif car[3] == 'd':
                                 self.cells_at_the_intersection.put(3, 0)
                                 self.cells_at_the_intersection.put(1, 1)
                             else:
@@ -398,30 +680,37 @@ class FourWayNoTurnsIntersection(Intersection):
                                 self.cells_at_the_intersection.put(2, 1)
 
                     else:
-                    # if the car leaves the intersection
+                        # if the car leaves the intersection
                         # update position car in new segment
+                        # car[3].p[next_segment_cells.tolist().index(1)] = 1
                         # update velocity car in new segment
-                        car[3].new_car_at = (next_segment_cells.tolist().index(1), vel[0])
+                        # car[3].v = np.insert(self.v, 0, vel)
+                        # car[4].new_car_at = (next_segment_cells.tolist().index(1), vel[0])
+                        self.exits[side_exit_from_intersection].new_car_at = (
+                        next_segment_cells.tolist().index(1), vel[0])
 
                         # clean the cell at the intersection
-                        if car[2] == 'l':
+                        if car[3] == 'l':
                             self.cells_at_the_intersection.put(2, 0)
-                        elif car[2] == 'r':
+                        elif car[3] == 'r':
                             self.cells_at_the_intersection.put(1, 0)
-                        elif car[2] == 'd':
+                        elif car[3] == 'd':
                             self.cells_at_the_intersection.put(3, 0)
                         else:
                             self.cells_at_the_intersection.put(0, 0)
 
+                        # delete array contains car at the intersection
+                        # del car
+                        # self.new_car_at_intersection.remove(car)
                         delete_elements.append(car)
 
                 # if the second cell is occupied
-                elif car[0] == 1 and car[4] == "straight":
+                elif car[0] == 1 and car[5] == "straight":
                     # e.g. [  1]-->
                     #      [   ]
                     # e.g. [   ]
                     #      [1  ] ↓
-                    pos = np.zeros((1 + car[3].free_init_cells), dtype=np.int8)
+                    pos = np.zeros((1 + self.exits[side_exit_from_intersection].free_init_cells), dtype=np.int8)
                     # put car in the vector
                     pos[0] = 1
                     (pos, vel) = self._nagel_schreckenberg_step(pos, car[1])
@@ -433,33 +722,40 @@ class FourWayNoTurnsIntersection(Intersection):
                         # update velocity car at the intersection
                         car[1] = vel
                     else:
-                    # if the car leaves the intersection
+                        # if the car leaves the intersection
                         # update position car in new segment
+                        # car[3].p[next_segment_cells.tolist().index(1)] = 1
                         # update velocity car in new segment
-                        car[3].new_car_at = (next_segment_cells.tolist().index(1), vel[0])
+                        # car[3].v = np.insert(self.v, 0, vel)
+                        # car[4].new_car_at = (next_segment_cells.tolist().index(1), vel[0])
+                        self.exits[side_exit_from_intersection].new_car_at = (
+                        next_segment_cells.tolist().index(1), vel[0])
 
                         # clean the cell at the intersection
-                        if car[2] == 'l':
+                        if car[3] == 'l':
                             self.cells_at_the_intersection.put(3, 0)
-                        elif car[2] == 'r':
+                        elif car[3] == 'r':
                             self.cells_at_the_intersection.put(0, 0)
-                        elif car[2] == 'd':
+                        elif car[3] == 'd':
                             self.cells_at_the_intersection.put(1, 0)
                         else:
                             self.cells_at_the_intersection.put(2, 0)
 
                         # delete array contains car at the intersection
-                        #del car
-                        #self.new_car_at_intersection.remove(car)
+                        # del car
+                        # self.new_car_at_intersection.remove(car)
                         delete_elements.append(car)
 
                 # if the first cell is occupied and car turn right
-                elif car[0] == 0 and car[4] == "turn right":
+                elif car[0] == 0 and car[5] == "turn right":
+                    # TODO TURN RIGHT
+                    print("turn right")
+
                     # e.g. [  1] ^-
                     #      [   ]
                     # e.g. [   ]
                     #      [1  ] --v
-                    pos = np.zeros((1 + car[3].free_init_cells), dtype=np.int8)
+                    pos = np.zeros((1 + self.exits[side_exit_from_intersection].free_init_cells), dtype=np.int8)
                     # put car in the vector
                     pos[0] = 1
                     (pos, vel) = self._nagel_schreckenberg_step(pos, car[1])
@@ -473,28 +769,245 @@ class FourWayNoTurnsIntersection(Intersection):
                     else:
                         # if the car leaves the intersection
                         # add car to new segment
-                        car[3].new_car_at = (next_segment_cells.tolist().index(1), vel[0])
+                        # car[4].new_car_at = (next_segment_cells.tolist().index(1), vel[0])
+                        self.exits[side_exit_from_intersection].new_car_at = (
+                        next_segment_cells.tolist().index(1), vel[0])
 
                         # clean the cell at the intersection
-                        if car[2] == 'l':
+                        if car[3] == 'l':
                             self.cells_at_the_intersection.put(3, 0)
-                        elif car[2] == 'r':
+                        elif car[3] == 'r':
                             self.cells_at_the_intersection.put(0, 0)
-                        elif car[2] == 'd':
+                        elif car[3] == 'd':
                             self.cells_at_the_intersection.put(1, 0)
                         else:
                             self.cells_at_the_intersection.put(2, 0)
 
                         delete_elements.append(car)
 
-                elif car[0] == 0 and car[4] == "turn right":
-                    # TODO TURN RIGHT
-                    print("turn right")
+                # if the first cell is occupied and car turn left
+                elif car[0] == 0 and car[5] == "turn left":
 
-                # if the third cell is occupied
+                    # If a car is at an intersection and the traffic light (state) has changed,
+                    # it has priority and can cross the intersection first --> priority = True
+                    # If a car is at an intersection and wants to turn left,
+                    # and cars are coming in the opposite direction, it must
+                    # give way to them. --> priority = False
+
+                    priority = None
+
+                    if car[3] in self.state:
+                        priority = True
+                    else:
+                        priority = False
+
+                    side_previous_segment = self.dest_dict[car[2]][0]
+
+                    (free_cells_at_intersection, free_cells_at_next_segment) = self.check_can_i_go_to_the_next_segment(
+                        car[0], side_previous_segment, priority)
+
+                    pos = np.zeros((free_cells_at_intersection + free_cells_at_next_segment), dtype=np.int8)
+                    # put car in the vector
+                    pos[0] = 1
+                    (pos, vel) = self._nagel_schreckenberg_step(pos, car[1])
+
+                    if free_cells_at_intersection == 3:
+                        # split cells - 3 cells at intersection e.g.
+                        # [  0]
+                        # [0,0]
+                        pos, next_segment_cells = np.split(pos, [3])
+                    else:
+                        # split cells - 2 cells at intersection e.g.
+                        # [  0]
+                        # [0,0]
+                        pos, next_segment_cells = np.split(pos, [2])
+
+                    # if the car stays at the intersection
+                    if (np.count_nonzero(next_segment_cells)) == 0:
+                        # update velocity car at the intersection
+                        car[1] = vel
+
+                        # car changes its position at the intersection and occupies second cell
+                        if pos.tolist().index(1) == 1:
+                            # before, e.g.
+                            # [  0]       [  0]
+                            # [1,0] after [0,1]
+                            # update position car at the intersection
+                            car[0] = 1
+                            if car[3] == 'l':
+                                self.cells_at_the_intersection.put(0, 0)
+                                self.cells_at_the_intersection.put(2, 1)
+                            elif car[3] == 'r':
+                                self.cells_at_the_intersection.put(3, 0)
+                                self.cells_at_the_intersection.put(1, 1)
+                            elif car[3] == 'd':
+                                self.cells_at_the_intersection.put(2, 0)
+                                self.cells_at_the_intersection.put(3, 1)
+                            else:
+                                self.cells_at_the_intersection.put(1, 0)
+                                self.cells_at_the_intersection.put(0, 1)
+                        elif free_cells_at_intersection == 3 and pos.tolist().index(1) == 2:
+                            # before, e.g.
+                            # [  0]       [  1]
+                            # [1,0] after [0,0]
+                            # update position car at the intersection
+                            car[0] = 2
+                            if car[3] == 'l':
+                                self.cells_at_the_intersection.put(0, 0)
+                                self.cells_at_the_intersection.put(3, 1)
+                            elif car[3] == 'r':
+                                self.cells_at_the_intersection.put(3, 0)
+                                self.cells_at_the_intersection.put(0, 1)
+                            elif car[3] == 'd':
+                                self.cells_at_the_intersection.put(2, 0)
+                                self.cells_at_the_intersection.put(1, 1)
+                            else:
+                                self.cells_at_the_intersection.put(1, 0)
+                                self.cells_at_the_intersection.put(2, 1)
+
+                    else:
+                        # if the car leaves the intersection
+                        # update position car in new segment
+                        # update velocity car in new segment
+                        self.exits[side_exit_from_intersection].new_car_at = (
+                            next_segment_cells.tolist().index(1), vel[0])
+
+                        # clean the cell at the intersection
+                        if car[3] == 'l':
+                            self.cells_at_the_intersection.put(0, 0)
+                        elif car[3] == 'r':
+                            self.cells_at_the_intersection.put(3, 0)
+                        elif car[3] == 'd':
+                            self.cells_at_the_intersection.put(2, 0)
+                        else:
+                            self.cells_at_the_intersection.put(1, 0)
+
+                        # delete array contains car at the intersection
+                        delete_elements.append(car)
+
+                elif car[0] == 1 and car[5] == "turn left":
+
+                    # If a car is at an intersection and the traffic light (state) has changed,
+                    # it has priority and can cross the intersection first --> priority = True
+                    # If a car is at an intersection and wants to turn left,
+                    # and cars are coming in the opposite direction, it must
+                    # give way to them. --> priority = False
+
+                    priority = None
+
+                    if car[3] in self.state:
+                        priority = True
+                    else:
+                        priority = False
+
+                    side_previous_segment = self.dest_dict[car[2]][0]
+
+                    (free_cells_at_intersection, free_cells_at_next_segment) = self.check_can_i_go_to_the_next_segment(
+                        car[0], side_previous_segment, priority)
+
+                    pos = np.zeros((free_cells_at_intersection + free_cells_at_next_segment), dtype=np.int8)
+                    # put car in the vector
+                    pos[0] = 1
+                    (pos, vel) = self._nagel_schreckenberg_step(pos, car[1])
+
+                    if free_cells_at_intersection == 2:
+                        # split cells - 2 cells at intersection e.g.
+                        # [  0]
+                        # [  0]
+                        pos, next_segment_cells = np.split(pos, [2])
+                    else:
+                        # split cells - 1 cells at intersection e.g.
+                        # [   ]
+                        # [  0]
+                        pos, next_segment_cells = np.split(pos, [1])
+
+                    # if the car stays at the intersection
+                    if (np.count_nonzero(next_segment_cells)) == 0:
+                        # update velocity car at the intersection
+                        car[1] = vel
+                        # car changes its position at the intersection and occupies third cell
+                        if pos.tolist().index(1) == 1:
+                            # before, e.g.
+                            # [  0]       [  1]
+                            # [  1] after [  0]
+                            # update position car at the intersection
+                            car[0] = 2
+                            if car[3] == 'l':
+                                self.cells_at_the_intersection.put(2, 0)
+                                self.cells_at_the_intersection.put(3, 1)
+                            elif car[3] == 'r':
+                                self.cells_at_the_intersection.put(1, 0)
+                                self.cells_at_the_intersection.put(0, 1)
+                            elif car[3] == 'd':
+                                self.cells_at_the_intersection.put(3, 0)
+                                self.cells_at_the_intersection.put(1, 1)
+                            else:
+                                self.cells_at_the_intersection.put(0, 0)
+                                self.cells_at_the_intersection.put(2, 1)
+                    else:
+                        # if the car leaves the intersection
+                        # update position car in new segment
+                        # update velocity car in new segment
+                        self.exits[side_exit_from_intersection].new_car_at = (
+                            next_segment_cells.tolist().index(1), vel[0])
+
+                        # clean the cell at the intersection
+                        if car[3] == 'l':
+                            self.cells_at_the_intersection.put(2, 0)
+                        elif car[3] == 'r':
+                            self.cells_at_the_intersection.put(1, 0)
+                        elif car[3] == 'd':
+                            self.cells_at_the_intersection.put(3, 0)
+                        else:
+                            self.cells_at_the_intersection.put(0, 0)
+
+                        # delete array contains car at the intersection
+                        delete_elements.append(car)
+
                 else:
-                    # TODO change when is turn left
-                    print("turn left")
+
+                    # The car is just leaving the intersection so it has priority
+
+                    priority = True
+
+                    side_previous_segment = self.dest_dict[car[2]][0]
+
+                    (free_cells_at_intersection, free_cells_at_next_segment) = self.check_can_i_go_to_the_next_segment(
+                        car[0], side_previous_segment, priority)
+
+                    pos = np.zeros((free_cells_at_intersection + free_cells_at_next_segment), dtype=np.int8)
+                    # put car in the vector
+                    pos[0] = 1
+                    (pos, vel) = self._nagel_schreckenberg_step(pos, car[1])
+
+                    # split cells - 1 cells at intersection e.g.
+                    # [  0]
+                    # [   ]
+                    pos, next_segment_cells = np.split(pos, [1])
+
+                    # if the car stays at the intersection
+                    if (np.count_nonzero(next_segment_cells)) == 0:
+                        # update velocity car at the intersection
+                        car[1] = vel
+                    else:
+                        # if the car leaves the intersection
+                        # update position car in new segment
+                        # update velocity car in new segment
+                        self.exits[side_exit_from_intersection].new_car_at = (
+                            next_segment_cells.tolist().index(1), vel[0])
+
+                        # clean the cell at the intersection
+                        if car[3] == 'l':
+                            self.cells_at_the_intersection.put(3, 0)
+                        elif car[3] == 'r':
+                            self.cells_at_the_intersection.put(0, 0)
+                        elif car[3] == 'd':
+                            self.cells_at_the_intersection.put(1, 0)
+                        else:
+                            self.cells_at_the_intersection.put(2, 0)
+
+                        # delete array contains car at the intersection
+                        delete_elements.append(car)
 
             for i in delete_elements:
                 self.new_car_at_intersection.remove(i)
@@ -544,3 +1057,147 @@ class FourWayNoTurnsIntersection(Intersection):
         while i < (4 - np.count_nonzero(self.cells_at_the_intersection)):
             i += 1
         self.free_init_cells = i
+
+    def check_can_i_go_to_the_next_segment(self, car_position, side_previous_segment, priority):
+        # check if something is coming from the opposite segment
+
+        free_cells_at_intersection = 0
+        free_cells_at_next_segment = 0
+
+        if priority == True:
+
+            if side_previous_segment == "l":
+                # check if there is a car in the intersection cell when turning left
+                if self.cells_at_the_intersection[0][1] == 0:
+                    free_cells_at_intersection = 3 - car_position
+                    free_cells_at_next_segment = self.exits['u'].free_init_cells
+                else:
+                    if car_position == 2:
+                        free_cells_at_intersection = 1
+                        free_cells_at_next_segment = self.exits['u'].free_init_cells
+                    else:
+                        free_cells_at_intersection = 2 - car_position
+                        # there is a car on the left-turn trajectory, so this is equal to zero
+                        free_cells_at_next_segment = 0
+            elif side_previous_segment == "r":
+                # check if there is a car in the intersection cell when turning left
+                if self.cells_at_the_intersection[1][0] == 0:
+                    free_cells_at_intersection = 3 - car_position
+                    free_cells_at_next_segment = self.exits['d'].free_init_cells
+                else:
+                    if car_position == 2:
+                        free_cells_at_intersection = 1
+                        free_cells_at_next_segment = self.exits['d'].free_init_cells
+                    else:
+                        free_cells_at_intersection = 2 - car_position
+                        # there is a car on the left-turn trajectory, so this is equal to zero
+                        free_cells_at_next_segment = 0
+            elif side_previous_segment == "d":
+                # check if there is a car in the intersection cell when turning left
+                if self.cells_at_the_intersection[0][0] == 0:
+                    free_cells_at_intersection = 3 - car_position
+                    free_cells_at_next_segment = self.exits['l'].free_init_cells
+                else:
+                    if car_position == 2:
+                        free_cells_at_intersection = 1
+                        free_cells_at_next_segment = self.exits['l'].free_init_cells
+                    else:
+                        free_cells_at_intersection = 2 - car_position
+                        # there is a car on the left-turn trajectory, so this is equal to zero
+                        free_cells_at_next_segment = 0
+            else:
+                # check if there is a car in the intersection cell when turning left
+                if self.cells_at_the_intersection[1][1] == 0:
+                    free_cells_at_intersection = 3 - car_position
+                    free_cells_at_next_segment = self.exits['r'].free_init_cells
+                else:
+                    if car_position == 2:
+                        free_cells_at_intersection = 1
+                        free_cells_at_next_segment = self.exits['r'].free_init_cells
+                    else:
+                        free_cells_at_intersection = 2 - car_position
+                        # there is a car on the left-turn trajectory, so this is equal to zero
+                        free_cells_at_next_segment = 0
+        else:
+            if side_previous_segment == "l":
+                # check if there is a car in the intersection cell when turning left
+                if self.cells_at_the_intersection[0][1] == 0:
+                    # check that there are cars in the segment opposite of the previous segment
+                    if np.count_nonzero(self.entrances['r'].p) != 0:
+                        # check if there is a car the last five cells in the opposite segment
+                        if (np.where(self.entrances['r'].p == 1)[0][-1]) < 95:
+                            free_cells_at_intersection = 3 - car_position
+                            free_cells_at_next_segment = self.exits['u'].free_init_cells
+                        else:
+                            free_cells_at_intersection = 2 - car_position
+                            free_cells_at_next_segment = 0
+                    else:
+                        # nothing is coming from the opposite direction
+                        free_cells_at_intersection = 3 - car_position
+                        free_cells_at_next_segment = self.exits['u'].free_init_cells
+                else:
+                    free_cells_at_intersection = 2 - car_position
+                    # there is a car on the left-turn trajectory, so this is equal to zero
+                    free_cells_at_next_segment = 0
+
+            elif side_previous_segment == "r":
+                # check if there is a car in the intersection cell when turning left
+                if self.cells_at_the_intersection[1][0] == 0:
+                    # check that there are cars in the segment opposite of the previous segment
+                    if np.count_nonzero(self.entrances['l'].p) != 0:
+                        # check if there is a car the last five cells in the opposite segment
+                        if (np.where(self.entrances['l'].p == 1)[0][-1]) < 95:
+                            free_cells_at_intersection = 3 - car_position
+                            free_cells_at_next_segment = self.exits['d'].free_init_cells
+                        else:
+                            free_cells_at_intersection = 2 - car_position
+                            free_cells_at_next_segment = 0
+                    else:
+                        # nothing is coming from the opposite direction
+                        free_cells_at_intersection = 3 - car_position
+                        free_cells_at_next_segment = self.exits['d'].free_init_cells
+                else:
+                    free_cells_at_intersection = 2 - car_position
+                    # there is a car on the left-turn trajectory, so this is equal to zero
+                    free_cells_at_next_segment = 0
+            elif side_previous_segment == "d":
+                # check if there is a car in the intersection cell when turning left
+                if self.cells_at_the_intersection[0][0] == 0:
+                    # check that there are cars in the segment opposite of the previous segment
+                    if np.count_nonzero(self.entrances['u'].p) != 0:
+                        # check if there is a car the last five cells in the opposite segment
+                        if (np.where(self.entrances['u'].p == 1)[0][-1]) < 95:
+                            free_cells_at_intersection = 3 - car_position
+                            free_cells_at_next_segment = self.exits['l'].free_init_cells
+                        else:
+                            free_cells_at_intersection = 2 - car_position
+                            free_cells_at_next_segment = 0
+                    else:
+                        # nothing is coming from the opposite direction
+                        free_cells_at_intersection = 3 - car_position
+                        free_cells_at_next_segment = self.exits['l'].free_init_cells
+                else:
+                    free_cells_at_intersection = 2 - car_position
+                    # there is a car on the left-turn trajectory, so this is equal to zero
+                    free_cells_at_next_segment = 0
+            else:
+                # check if there is a car in the intersection cell when turning left
+                if self.cells_at_the_intersection[1][1] == 0:
+                    # check that there are cars in the segment opposite of the previous segment
+                    if np.count_nonzero(self.entrances['d'].p) != 0:
+                        # check if there is a car the last five cells in the opposite segment
+                        if (np.where(self.entrances['d'].p == 1)[0][-1]) < 95:
+                            free_cells_at_intersection = 3 - car_position
+                            free_cells_at_next_segment = self.exits['r'].free_init_cells
+                        else:
+                            free_cells_at_intersection = 2 - car_position
+                            free_cells_at_next_segment = 0
+                    else:
+                        # nothing is coming from the opposite direction
+                        free_cells_at_intersection = 3 - car_position
+                        free_cells_at_next_segment = self.exits['r'].free_init_cells
+                else:
+                    free_cells_at_intersection = 2 - car_position
+                    # there is a car on the left-turn trajectory, so this is equal to zero
+                    free_cells_at_next_segment = 0
+        return (free_cells_at_intersection, free_cells_at_next_segment)
