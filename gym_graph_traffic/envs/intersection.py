@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import List, Union, Tuple
+from typing import List
 import numpy as np
 import random
 
@@ -17,12 +17,13 @@ class Intersection(ABC):
         self.routing = None  # entrance_direction: str -> exit_direction: str
         self.dest_dict = None  # entrance_segment_idx: int -> {entrance_direction: str, exit_segment: Segment}
 
-        """create matrix of cells at the intersection; 
-        each intersection has 2 cells in two directions ( vertical and horizontal)"""
+        # create matrix of cells at the intersection,
+        # each intersection has 2 cells in two directions ( vertical and horizontal)
         self.cells_at_the_intersection = np.zeros((2, 2), dtype=int)  # create matrix of cells
 
+        # communication with neighbour segments about cars that are on intersection
         self.new_car_at_intersection = []
-        self.free_init_cells: int = 4 - np.count_nonzero(self.cells_at_the_intersection)
+        # velocity vector
         self.v = np.zeros(0, dtype=np.int8)
 
     def __str__(self) -> str:
@@ -49,7 +50,7 @@ class Intersection(ABC):
 
 class FourWayNoTurnsIntersection(Intersection):
 
-    def __init__(self, idx, red_durations: List[int], x, y, intersection_size):
+    def __init__(self, idx, red_durations: List[int], x, y, intersection_size, max_v: int, prob_slow_down: float,):
         super().__init__(idx)
 
         self.red_durations = red_durations
@@ -65,6 +66,10 @@ class FourWayNoTurnsIntersection(Intersection):
         self.x = x
         self.y = y
         self.intersection_size = intersection_size
+
+        # cellular automata parameters
+        self.max_v = max_v
+        self.prob_slow_down = prob_slow_down
 
     def __str__(self) -> str:
         return str(self.idx)
@@ -90,15 +95,13 @@ class FourWayNoTurnsIntersection(Intersection):
         road_color = (192, 192, 192) if light_mode else (100, 100, 100)
         pygame.draw.rect(surface, road_color,
                          pygame.Rect(self.x, self.y, self.intersection_size, self.intersection_size))
-        if self.state is "lr":
 
+        if self.state is "lr":
             # Check if the cells with the intersection have cars (they are equal to "1"), if so, draw a car at the intersection
             for i, check_cell in enumerate(self.cells_at_the_intersection):
                 for car_in_cell in np.nonzero(check_cell)[0]:
                     if car_in_cell is not None:
-                        # TODO
-                        # change color for 162, 162, 162
-                        car_color = (0, 0, 254) if light_mode else (180, 180, 180)
+                        car_color = (162, 162, 162) if light_mode else (180, 180, 180)
                         pygame.draw.rect(surface, car_color,
                                          pygame.Rect((self.x + self.intersection_size / 2 + 4 * car_in_cell - 2,
                                                       self.y + (self.intersection_size / 2 * i + 0.5), 1,
@@ -112,14 +115,11 @@ class FourWayNoTurnsIntersection(Intersection):
                                          red_width))
 
         else:
-
             # Check if the cells with the intersection have cars (they are equal to "1"), if so, draw a car at the intersection
             for i, check_cell in enumerate(self.cells_at_the_intersection):
                 for car_in_cell in np.nonzero(check_cell)[0]:
                     if car_in_cell is not None:
-                        # TODO
-                        # change color for 162, 162, 162
-                        car_color = (0, 0, 254) if light_mode else (180, 180, 180)
+                        car_color = (162, 162, 162) if light_mode else (180, 180, 180)
                         pygame.draw.rect(surface, car_color,
                                          pygame.Rect((self.x + (self.intersection_size / 2 * car_in_cell + 0.5),
                                                       self.y + self.intersection_size / 2 + 4 * i - 2,
@@ -134,14 +134,12 @@ class FourWayNoTurnsIntersection(Intersection):
 
     def segment_draw_coords(self, d, to_side):
         half_intersection_size = self.intersection_size / 2
-
         to_direction = {
             'l': [self.x - d, self.y + half_intersection_size + 1, d, half_intersection_size],
             'r': [self.x + self.intersection_size, self.y, d, half_intersection_size],
             'd': [self.x + half_intersection_size + 1, self.y + self.intersection_size, half_intersection_size, d],
             'u': [self.x, self.y - d, half_intersection_size, d]
         }
-
         return to_direction[to_side]
 
     def update(self) -> None:
@@ -151,8 +149,6 @@ class FourWayNoTurnsIntersection(Intersection):
                 self.state = "lr"
 
     def can_i_go(self, from_idx, cars_indices):
-        # (source, dest) = self.dest_dict.get(segment.idx, (None, None))
-        # source = self.dest_dict.get(segment.idx)[0]
         source = self.dest_dict[from_idx][0]
 
         if source in self.state:
@@ -185,23 +181,33 @@ class FourWayNoTurnsIntersection(Intersection):
             side_previous_segment = ""
             direction_previous_segment = ""
 
+            # If car can go by intersection, save all information about it
+            # in directory info_can_i_go{}
+            info_can_i_go = {
+                'free_cells_at_intersection': None,
+                'chosen_segment': [],
+                'free_cells_at_segment': {},
+                'direction': ""
+            }
+
             if source is "r":
                 # car can go if two cells in its direction is free
-                # [0 0]     [0 0]
-                # [0 0]  or [1 0]
+                # [0 0]     [0 0]    [0 0]
+                # [0 0]  or [1 0] or [0 1]
 
                 if np.count_nonzero(self.cells_at_the_intersection[0]) == 0:
-
                     # if the car is in a cell on the left,
                     # [0 0]
                     # [0 1]
                     # check if this car is a previous state or not
                     if self.cells_at_the_intersection[1][1] == 1:
-
                         for car in self.new_car_at_intersection:
                             side_previous_segment = self.dest_dict[car[2]][0]
                             direction_previous_segment = car[5]
 
+                        # If the car in this cell is from the previous state and has a direction other
+                        # than "turn right", the check variable is set to False. Otherwise, the variable
+                        # check is True, so you car can go over the intersection.
                         check = None
 
                         if side_previous_segment == "d" and direction_previous_segment == "turn left":
@@ -213,13 +219,6 @@ class FourWayNoTurnsIntersection(Intersection):
 
                     if self.cells_at_the_intersection[1][1] == 0 or (
                             self.cells_at_the_intersection[1][1] == 1 and check == True):
-
-                        info_can_i_go = {
-                            'free_cells_at_intersection': None,
-                            'chosen_segment': [],
-                            'free_cells_at_segment': {},
-                            'direction': ""
-                        }
 
                         # choose direction for  car in last cell of segment
                         # TODO change
@@ -237,8 +236,7 @@ class FourWayNoTurnsIntersection(Intersection):
                         else:
                             # turn left
                             info_can_i_go['direction'] = "turn left"
-                            # check if there is a car in a cell [1][0]
-                            # if not car can go
+                            # check if there is a car in a cell [1][0] if not car can go
                             if self.cells_at_the_intersection[1][0] == 0:
                                 # check if there are cars in the opposite segment
                                 if np.count_nonzero(self.entrances['l'].p) != 0:
@@ -249,7 +247,6 @@ class FourWayNoTurnsIntersection(Intersection):
                                             cars_indices: self.exits[chosen_direction].free_init_cells}
                                     else:
                                         info_can_i_go['free_cells_at_intersection'] = 2
-                                        # info_can_i_go['free_cells_at_segment'] = 0
                                         info_can_i_go['free_cells_at_segment'] = {
                                             cars_indices: 0}
                                 else:
@@ -260,7 +257,6 @@ class FourWayNoTurnsIntersection(Intersection):
                             else:
                                 info_can_i_go['free_cells_at_intersection'] = 2
                                 # there is a car on the left-turn trajectory, so this is equal to zero
-                                # info_can_i_go['free_cells_at_segment'] = 0
                                 info_can_i_go['free_cells_at_segment'] = {
                                     cars_indices: 0}
 
@@ -276,19 +272,16 @@ class FourWayNoTurnsIntersection(Intersection):
                     return info_can_i_go
 
             elif source is "l":
-
                 # car can go if two cells in its direction is free
                 # [0 0]     [0 1]
                 # [0 0]  or [0 0]
 
                 if np.count_nonzero(self.cells_at_the_intersection[1]) == 0:
-
                     # if the car is in a cell on the left,
                     # [1 0]
                     # [0 0]
                     # check if this car is a previous state or not
                     if self.cells_at_the_intersection[0][0] == 1:
-
                         for car in self.new_car_at_intersection:
                             side_previous_segment = self.dest_dict[car[2]][0]
                             direction_previous_segment = car[5]
@@ -304,13 +297,6 @@ class FourWayNoTurnsIntersection(Intersection):
 
                     if self.cells_at_the_intersection[0][0] == 0 or (
                             self.cells_at_the_intersection[0][0] == 1 and check == True):
-
-                        info_can_i_go = {
-                            'free_cells_at_intersection': None,
-                            'chosen_segment': [],
-                            'free_cells_at_segment': {},
-                            'direction': ""
-                        }
 
                         # choose direction for  car in last cell of segment
                         # TODO change
@@ -364,18 +350,15 @@ class FourWayNoTurnsIntersection(Intersection):
                         return info_can_i_go
 
             elif source is "d":
-
                 # car can go if two cells in its direction is free
                 # [0 0]     [0 0]
                 # [0 0]  or [1 0]
                 if self.cells_at_the_intersection[0][1] == 0 and self.cells_at_the_intersection[1][1] == 0:
-
                     # if the car is in a cell on the left,
                     # [0 0]
                     # [1 0]
                     # check if this car is a previous state or not
                     if self.cells_at_the_intersection[1][0] == 1:
-
                         for car in self.new_car_at_intersection:
                             side_previous_segment = self.dest_dict[car[2]][0]
                             direction_previous_segment = car[5]
@@ -392,12 +375,6 @@ class FourWayNoTurnsIntersection(Intersection):
                     if self.cells_at_the_intersection[1][0] == 0 or (
                             self.cells_at_the_intersection[1][0] == 1 and check == True):
 
-                        info_can_i_go = {
-                            'free_cells_at_intersection': None,
-                            'chosen_segment': [],
-                            'free_cells_at_segment': {},
-                            'direction': ""
-                        }
                         # choose direction for  car in last cell of segment
                         # TODO change
                         # chosen_direction = random.choices(('u', 'r', 'l'), weights=(0.5, 0.25, 0.25), k=1)[0]
@@ -449,18 +426,15 @@ class FourWayNoTurnsIntersection(Intersection):
 
                         return info_can_i_go
             else:
-
                 # car can go if two cells in its direction is free
                 # [0 0]     [0 0]
                 # [0 0]  or [0 1]
                 if self.cells_at_the_intersection[0][0] == 0 and self.cells_at_the_intersection[1][0] == 0:
-
                     # if the car is in a cell on the left,
                     # [0 1]
                     # [0 0]
                     # check if this car is a previous state or not
                     if self.cells_at_the_intersection[0][1] == 1:
-
                         for car in self.new_car_at_intersection:
                             side_previous_segment = self.dest_dict[car[2]][0]
                             direction_previous_segment = car[5]
@@ -476,13 +450,6 @@ class FourWayNoTurnsIntersection(Intersection):
 
                     if self.cells_at_the_intersection[0][1] == 0 or (
                             self.cells_at_the_intersection[0][1] == 1 and check == True):
-
-                        info_can_i_go = {
-                            'free_cells_at_intersection': None,
-                            'chosen_segment': [],
-                            'free_cells_at_segment': {},
-                            'direction': ""
-                        }
 
                         # TODO change
                         # chosen_direction = random.choices(('d', 'l', 'r'), weights=(0.5, 0.25, 0.25), k=1)[0]
@@ -537,44 +504,41 @@ class FourWayNoTurnsIntersection(Intersection):
 
     def pass_car(self, from_idx, car_position, car_velocity, id_next_segment, side_next_segment, direction) -> None:
 
-        # if l->r or r<-l or d ↑ u or u ↓ d
         if direction == "straight":
+            # car stays at intersection
             if car_position == 0 or car_position == 1:
                 self.modify_the_cells_at_the_intersection(self.dest_dict[from_idx][0], car_position)
                 self.new_car_at_intersection.append(
                     [car_position, car_velocity, from_idx, side_next_segment, id_next_segment, direction])
-                # update information about init cells
-                self._update_free_init_cells()
             else:
-
+                # car leaves the intersection
                 for i in self.dest_dict[from_idx][1]:
                     if i.idx == id_next_segment:
                         i.new_car_at = (car_position - 2, car_velocity)
         elif direction == "turn right":
+            # car stays at intersection
             if car_position == 0:
                 self.modify_the_cells_at_the_intersection(self.dest_dict[from_idx][0], car_position)
                 self.new_car_at_intersection.append(
                     [car_position, car_velocity, from_idx, side_next_segment, id_next_segment, direction])
-                # update information about init cells
-                self._update_free_init_cells()
             else:
+                # car leaves the intersection
                 for i in self.dest_dict[from_idx][1]:
                     if i.idx == id_next_segment:
                         i.new_car_at = (car_position - 1, car_velocity)
         else:  # turn left
+            # car stays at intersection
             if car_position == 0 or car_position == 1:
                 self.modify_the_cells_at_the_intersection(self.dest_dict[from_idx][0], car_position)
                 self.new_car_at_intersection.append(
                     [car_position, car_velocity, from_idx, side_next_segment, id_next_segment, direction])
-                # update information about init cells
-                self._update_free_init_cells()
             elif car_position == 2:
+                # car stays at intersection
                 self.modify_the_cells_at_the_intersection(self.dest_dict[from_idx][0], car_position)
                 self.new_car_at_intersection.append(
                     [car_position, car_velocity, from_idx, side_next_segment, id_next_segment, direction])
-                # update information about init cells
-                self._update_free_init_cells()
             else:
+                # car leaves the intersection
                 for i in self.dest_dict[from_idx][1]:
                     if i.idx == id_next_segment:
                         i.new_car_at = (car_position - 3, car_velocity)
@@ -612,21 +576,17 @@ class FourWayNoTurnsIntersection(Intersection):
 
     def update_first_phase(self) -> None:
         """
-        First phase of segment update: cellular automata step, and (sometimes) passing car to following segment.
+        First phase of intersection update: cellular automata step, and (sometimes) passing car to following segment.
         """
 
         if np.count_nonzero(self.cells_at_the_intersection) != 0:
-
-            if np.count_nonzero(self.cells_at_the_intersection) != len(self.new_car_at_intersection):
-                print("roznica!!!!!!!")
 
             # auxiliary array for removing elements from new_car_at_intersection
             delete_elements = []
 
             # Car is an array containing the car's position at the
-            # intersection (0 or 1), the speed of the car, the direction
-            # it came from, the next segment where it wants to go and
-            # whether the car turns left or not.
+            # intersection (0 or 1 or 2), the speed of the car, id the previous
+            # segment, the side of next segment, id the next segment, direction move.
             # car = [car_position, car_velocity, from_idx, side_next_segment, id_next_segment, direction]
             # direction: straight, turn right or turn left
             for car in self.new_car_at_intersection:
@@ -649,7 +609,6 @@ class FourWayNoTurnsIntersection(Intersection):
                     #  --> [1 0] -->
                     # e.g. [1  ]  ↓
                     #      [0  ]  ↓
-                    # todo change
                     pos = np.zeros((2 + self.exits[side_exit_from_intersection].free_init_cells), dtype=np.int8)
                     # put car in the vector
                     pos[0] = 1
@@ -681,11 +640,7 @@ class FourWayNoTurnsIntersection(Intersection):
 
                     else:
                         # if the car leaves the intersection
-                        # update position car in new segment
-                        # car[3].p[next_segment_cells.tolist().index(1)] = 1
-                        # update velocity car in new segment
-                        # car[3].v = np.insert(self.v, 0, vel)
-                        # car[4].new_car_at = (next_segment_cells.tolist().index(1), vel[0])
+                        # update position and velocity car in new segment
                         self.exits[side_exit_from_intersection].new_car_at = (
                         next_segment_cells.tolist().index(1), vel[0])
 
@@ -699,9 +654,8 @@ class FourWayNoTurnsIntersection(Intersection):
                         else:
                             self.cells_at_the_intersection.put(0, 0)
 
-                        # delete array contains car at the intersection
-                        # del car
-                        # self.new_car_at_intersection.remove(car)
+                        # If the car leaves the intersection, add it to a temporary
+                        # array that will allow you to remove it from the array new_car_at_intersection[]
                         delete_elements.append(car)
 
                 # if the second cell is occupied
@@ -723,11 +677,7 @@ class FourWayNoTurnsIntersection(Intersection):
                         car[1] = vel
                     else:
                         # if the car leaves the intersection
-                        # update position car in new segment
-                        # car[3].p[next_segment_cells.tolist().index(1)] = 1
-                        # update velocity car in new segment
-                        # car[3].v = np.insert(self.v, 0, vel)
-                        # car[4].new_car_at = (next_segment_cells.tolist().index(1), vel[0])
+                        # update position and velocity car in new segment
                         self.exits[side_exit_from_intersection].new_car_at = (
                         next_segment_cells.tolist().index(1), vel[0])
 
@@ -741,16 +691,12 @@ class FourWayNoTurnsIntersection(Intersection):
                         else:
                             self.cells_at_the_intersection.put(2, 0)
 
-                        # delete array contains car at the intersection
-                        # del car
-                        # self.new_car_at_intersection.remove(car)
+                        # If the car leaves the intersection, add it to a temporary
+                        # array that will allow you to remove it from the array new_car_at_intersection[]
                         delete_elements.append(car)
 
                 # if the first cell is occupied and car turn right
                 elif car[0] == 0 and car[5] == "turn right":
-                    # TODO TURN RIGHT
-                    print("turn right")
-
                     # e.g. [  1] ^-
                     #      [   ]
                     # e.g. [   ]
@@ -769,7 +715,6 @@ class FourWayNoTurnsIntersection(Intersection):
                     else:
                         # if the car leaves the intersection
                         # add car to new segment
-                        # car[4].new_car_at = (next_segment_cells.tolist().index(1), vel[0])
                         self.exits[side_exit_from_intersection].new_car_at = (
                         next_segment_cells.tolist().index(1), vel[0])
 
@@ -783,6 +728,8 @@ class FourWayNoTurnsIntersection(Intersection):
                         else:
                             self.cells_at_the_intersection.put(2, 0)
 
+                        # If the car leaves the intersection, add it to a temporary
+                        # array that will allow you to remove it from the array new_car_at_intersection[]
                         delete_elements.append(car)
 
                 # if the first cell is occupied and car turn left
@@ -803,7 +750,7 @@ class FourWayNoTurnsIntersection(Intersection):
 
                     side_previous_segment = self.dest_dict[car[2]][0]
 
-                    (free_cells_at_intersection, free_cells_at_next_segment) = self.check_can_i_go_to_the_next_segment(
+                    (free_cells_at_intersection, free_cells_at_next_segment) = self.check_can_i_go_to_the_next_segment_from_intersection(
                         car[0], side_previous_segment, priority)
 
                     pos = np.zeros((free_cells_at_intersection + free_cells_at_next_segment), dtype=np.int8)
@@ -864,11 +811,9 @@ class FourWayNoTurnsIntersection(Intersection):
                             else:
                                 self.cells_at_the_intersection.put(1, 0)
                                 self.cells_at_the_intersection.put(2, 1)
-
                     else:
                         # if the car leaves the intersection
-                        # update position car in new segment
-                        # update velocity car in new segment
+                        # update position and velocity car in new segment
                         self.exits[side_exit_from_intersection].new_car_at = (
                             next_segment_cells.tolist().index(1), vel[0])
 
@@ -882,7 +827,8 @@ class FourWayNoTurnsIntersection(Intersection):
                         else:
                             self.cells_at_the_intersection.put(1, 0)
 
-                        # delete array contains car at the intersection
+                        # If the car leaves the intersection, add it to a temporary
+                        # array that will allow you to remove it from the array new_car_at_intersection[]
                         delete_elements.append(car)
 
                 elif car[0] == 1 and car[5] == "turn left":
@@ -902,7 +848,7 @@ class FourWayNoTurnsIntersection(Intersection):
 
                     side_previous_segment = self.dest_dict[car[2]][0]
 
-                    (free_cells_at_intersection, free_cells_at_next_segment) = self.check_can_i_go_to_the_next_segment(
+                    (free_cells_at_intersection, free_cells_at_next_segment) = self.check_can_i_go_to_the_next_segment_from_intersection(
                         car[0], side_previous_segment, priority)
 
                     pos = np.zeros((free_cells_at_intersection + free_cells_at_next_segment), dtype=np.int8)
@@ -946,8 +892,7 @@ class FourWayNoTurnsIntersection(Intersection):
                                 self.cells_at_the_intersection.put(2, 1)
                     else:
                         # if the car leaves the intersection
-                        # update position car in new segment
-                        # update velocity car in new segment
+                        # update position and velocity car in new segment
                         self.exits[side_exit_from_intersection].new_car_at = (
                             next_segment_cells.tolist().index(1), vel[0])
 
@@ -961,18 +906,17 @@ class FourWayNoTurnsIntersection(Intersection):
                         else:
                             self.cells_at_the_intersection.put(0, 0)
 
-                        # delete array contains car at the intersection
+                        # If the car leaves the intersection, add it to a temporary
+                        # array that will allow you to remove it from the array new_car_at_intersection[]
                         delete_elements.append(car)
 
                 else:
 
                     # The car is just leaving the intersection so it has priority
-
                     priority = True
-
                     side_previous_segment = self.dest_dict[car[2]][0]
 
-                    (free_cells_at_intersection, free_cells_at_next_segment) = self.check_can_i_go_to_the_next_segment(
+                    (free_cells_at_intersection, free_cells_at_next_segment) = self.check_can_i_go_to_the_next_segment_from_intersection(
                         car[0], side_previous_segment, priority)
 
                     pos = np.zeros((free_cells_at_intersection + free_cells_at_next_segment), dtype=np.int8)
@@ -991,8 +935,7 @@ class FourWayNoTurnsIntersection(Intersection):
                         car[1] = vel
                     else:
                         # if the car leaves the intersection
-                        # update position car in new segment
-                        # update velocity car in new segment
+                        # update position and velocity car in new segment
                         self.exits[side_exit_from_intersection].new_car_at = (
                             next_segment_cells.tolist().index(1), vel[0])
 
@@ -1006,39 +949,31 @@ class FourWayNoTurnsIntersection(Intersection):
                         else:
                             self.cells_at_the_intersection.put(2, 0)
 
-                        # delete array contains car at the intersection
+                        # If the car leaves the intersection, add it to a temporary
+                        # array that will allow you to remove it from the array new_car_at_intersection[]
                         delete_elements.append(car)
-
+            # If the car has just left the intersection, remove its information from the array new_car_at_intersection[]
             for i in delete_elements:
                 self.new_car_at_intersection.remove(i)
             delete_elements.clear()
-
-        self._update_free_init_cells()
 
     def _nagel_schreckenberg_step(self, pos, v):
         """
         Updating automata by the rules of Nagel-Schreckenberg model.
         """
 
-        max_v = 5
-        prob_slow_down = 0.1
-
         # 1. Acceleration
         v += 1
-        v[v == max_v + 1] = max_v
+        v[v == self.max_v + 1] = self.max_v
 
         # 2. Slowing down
         cars_indices = pos.nonzero()[0]
         cars_indices_extended = np.append(cars_indices, pos.size)
         free_cells = cars_indices_extended[1:] - cars_indices - 1
-
-        if len(v) > len(free_cells):
-            print("ERROR IN NAGEL_SCHRECKENBERG_STEP() - intersection")
-
         v = np.minimum(v, free_cells)
 
         # 3. Randomization
-        v -= np.random.binomial(1, prob_slow_down, v.size)
+        v -= np.random.binomial(1, self.prob_slow_down, v.size)
         v[v == -1] = 0
 
         # 4. Car motion
@@ -1048,17 +983,7 @@ class FourWayNoTurnsIntersection(Intersection):
 
         return (pos, v)
 
-    def _update_free_init_cells(self) -> None:
-        """
-        Updating information about init cells.
-        """
-        i = 0
-        # TODO
-        while i < (4 - np.count_nonzero(self.cells_at_the_intersection)):
-            i += 1
-        self.free_init_cells = i
-
-    def check_can_i_go_to_the_next_segment(self, car_position, side_previous_segment, priority):
+    def check_can_i_go_to_the_next_segment_from_intersection(self, car_position, side_previous_segment, priority):
         # check if something is coming from the opposite segment
 
         free_cells_at_intersection = 0
